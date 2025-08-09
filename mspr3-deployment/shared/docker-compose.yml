@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  # Base de données PostgreSQL
+  database:
+    build:
+      context: ./docker/database
+      dockerfile: Dockerfile
+    container_name: pandemies_db
+    environment:
+      POSTGRES_DB: pandemies_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: loading
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./data:/data:ro
+    networks:
+      - pandemies_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pandemies_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ETL Process
+  etl:
+    build:
+      context: ./docker/etl
+      dockerfile: Dockerfile
+    container_name: pandemies_etl
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data:ro
+    networks:
+      - pandemies_network
+    environment:
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_NAME: pandemies_db
+      DB_USER: postgres
+      DB_PASSWORD: loading
+    restart: "no"
+
+  # API Backend
+  api:
+    build:
+      context: ./docker/api
+      dockerfile: Dockerfile
+    container_name: pandemies_api
+    depends_on:
+      database:
+        condition: service_healthy
+      etl:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    networks:
+      - pandemies_network
+    environment:
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_NAME: pandemies_db
+      DB_USER: postgres
+      DB_PASSWORD: loading
+      API_ENV: development
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Dashboard Frontend
+  dashboard:
+    build:
+      context: ./docker/dashboard
+      dockerfile: Dockerfile
+    container_name: pandemies_dashboard
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    networks:
+      - pandemies_network
+    environment:
+      API_BASE_URL: http://api:8000
+      STREAMLIT_ENV: development
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  pandemies_network:
+    driver: bridge
+
+volumes:
+  postgres_data:

@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  # Base de données PostgreSQL - Suisse
+  database:
+    build:
+      context: ../shared/docker/database
+      dockerfile: Dockerfile
+    container_name: pandemies_db_suisse
+    environment:
+      POSTGRES_DB: pandemies_db_suisse
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: loading
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data_suisse:/var/lib/postgresql/data
+      - ../shared/data:/data:ro
+    networks:
+      - pandemies_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pandemies_db_suisse"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ETL Process - Suisse
+  etl:
+    build:
+      context: ../shared/docker/etl
+      dockerfile: Dockerfile
+    container_name: pandemies_etl_suisse
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - ../shared/data:/app/data:ro
+    networks:
+      - pandemies_network
+    environment:
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_NAME: pandemies_db_suisse
+      DB_USER: postgres
+      DB_PASSWORD: loading
+      COUNTRY: SUISSE
+      DEPLOYMENT_TYPE: minimal
+    restart: "no"
+
+  # API Backend - Suisse
+  api:
+    build:
+      context: ../shared/docker/api
+      dockerfile: Dockerfile
+    container_name: pandemies_api_suisse
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "8002:8000"
+    networks:
+      - pandemies_network
+    environment:
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_NAME: pandemies_db_suisse
+      DB_USER: postgres
+      DB_PASSWORD: loading
+      API_ENV: suisse
+      COUNTRY: SUISSE
+      INCLUDE_TECHNICAL_API: "false"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Dashboard Frontend - Suisse
+  dashboard:
+    build:
+      context: ../shared/docker/dashboard
+      dockerfile: Dockerfile
+    container_name: pandemies_dashboard_suisse
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8503:8501"
+    networks:
+      - pandemies_network
+    environment:
+      API_BASE_URL: http://api:8000
+      COUNTRY: SUISSE
+      LANGUAGES: "fr,de,it"
+      INCLUDE_DATAVIZ: "false"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  pandemies_network:
+    driver: bridge
+
+volumes:
+  postgres_data_suisse:

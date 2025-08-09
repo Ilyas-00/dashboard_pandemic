@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  # Base de données PostgreSQL - USA
+  database:
+    build:
+      context: ../shared/docker/database
+      dockerfile: Dockerfile
+    container_name: pandemies_db_usa
+    environment:
+      POSTGRES_DB: pandemies_db_usa
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: loading
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data_usa:/var/lib/postgresql/data
+      - ../shared/data:/data:ro
+    networks:
+      - pandemies_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pandemies_db_usa"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ETL Process - USA
+  etl:
+    build:
+      context: ../shared/docker/etl
+      dockerfile: Dockerfile
+    container_name: pandemies_etl_usa
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - ../shared/data:/app/data:ro
+    networks:
+      - pandemies_network
+    environment:
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_NAME: pandemies_db_usa
+      DB_USER: postgres
+      DB_PASSWORD: loading
+      COUNTRY: USA
+      DEPLOYMENT_TYPE: full
+    restart: "no"
+
+  # API Backend - USA
+  api:
+    build:
+      context: ../shared/docker/api
+      dockerfile: Dockerfile
+    container_name: pandemies_api_usa
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    networks:
+      - pandemies_network
+    environment:
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_NAME: pandemies_db_usa
+      DB_USER: postgres
+      DB_PASSWORD: loading
+      API_ENV: usa
+      COUNTRY: USA
+      INCLUDE_TECHNICAL_API: "true"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Dashboard Frontend - USA
+  dashboard:
+    build:
+      context: ../shared/docker/dashboard
+      dockerfile: Dockerfile
+    container_name: pandemies_dashboard_usa
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    networks:
+      - pandemies_network
+    environment:
+      API_BASE_URL: http://api:8000
+      COUNTRY: USA
+      LANGUAGE: en
+      INCLUDE_DATAVIZ: "true"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  pandemies_network:
+    driver: bridge
+
+volumes:
+  postgres_data_usa:
+
+  
